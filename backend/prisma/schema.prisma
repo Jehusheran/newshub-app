@@ -1,0 +1,218 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String?  @unique
+  role          Role     @default(UPLOADER)
+  organization  String?  // Media buyers
+  verified      Boolean  @default(false)
+  walletBalance Decimal  @default(0.00)  // Royalty payouts
+  totalEarnings Decimal  @default(0.00)
+  
+  // Relations
+  videos        Video[]
+  purchases     Purchase[]
+  posts         PublicPost[]
+  verifications Video[]  @relation("VerifiedBy")  // Admin verified
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@map("users")
+  @@index([email])
+  @@index([role])
+}
+
+model Video {
+  id            String   @id @default(uuid())
+  uploaderId    String
+  title         String
+  description   String?
+  thumbnailUrl  String
+  videoUrl      String
+  duration      String?  // "2m 47s"
+  location      String
+  gps           Json     // {"lat": 12.97, "lng": 77.59}
+  price         Decimal  @default(15000.00)
+  
+  // Admin verification
+  rating        Int?     // 1-5 stars
+  categories    String[] // ["protest", "accident"]
+  status        VideoStatus @default(PENDING)
+  verifiedBy    String?  // Admin User ID
+  verifiedAt    DateTime?
+  rejectionReason String?
+  
+  // Relations
+  uploader      User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  purchases     Purchase[]
+  posts         PublicPost[]
+  verifications User?    @relation("VerifiedBy")
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@unique([uploaderId, title])  // Prevent duplicates
+  @@map("videos")
+  @@index([status])
+  @@index([categories])
+  @@index([location])
+  @@index([uploaderId])
+  @@index([verifiedBy])
+}
+
+model Purchase {
+  id        String   @id @default(uuid())
+  videoId   String
+  buyerId   String
+  stripeId  String   @unique  // Stripe checkout session ID
+  amount    Decimal
+  currency  String   @default("INR")
+  expiry    DateTime // 90 days
+  
+  // Relations
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  buyer     User     @relation(fields: [buyerId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("purchases")
+  @@index([videoId])
+  @@index([buyerId])
+  @@index([stripeId])
+  @@index([expiry])
+}
+
+model PublicPost {
+  id         String   @id @default(uuid())
+  videoId    String
+  channelId  String   // Media buyer who purchased
+  clipUrl    String   // 30sec highlight
+  title      String
+  thumbnail  String
+  
+  views      Int      @default(0)
+  likes      Int      @default(0)
+  shares     Int      @default(0)
+  adRevenue  Decimal  @default(0.00)  // ₹20 CPM
+  
+  // Relations
+  video      Video    @relation(fields: [videoId], references: [id])
+  channel    User     @relation(fields: [channelId], references: [id])
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@map("public_posts")
+  @@index([videoId])
+  @@index([channelId])
+  @@index([views])
+  @@index([createdAt(sort: Desc)])
+}
+
+model Payout {
+  id           String   @id @default(uuid())
+  uploaderId   String
+  videoId      String?
+  amount       Decimal
+  status       PayoutStatus @default(PENDING)
+  method       String   // "razorpay", "neft"
+  referenceId  String?  // Razorpay payout ID
+  
+  // Relations
+  uploader     User     @relation(fields: [uploaderId], references: [id])
+  video        Video?   @relation(fields: [videoId], references: [id])
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@map("payouts")
+  @@index([uploaderId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+// Enums
+enum Role {
+  UPLOADER
+  MEDIA_BUYER
+  ADMIN
+  PUBLIC
+}
+
+enum VideoStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SOLD
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Indexes for performance (1M+ videos)
+model CategoryStats {
+  id         String   @id @default(uuid())
+  category   String
+  videoCount Int      @default(0)
+  totalPrice Decimal  @default(0.00)
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@unique([category])
+  @@map("category_stats")
+  @@index([category])
+}
+
+// Session management
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@map("sessions")
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Migration helpers
+view VideoAnalytics as
+  SELECT 
+    status,
+    COUNT(*) as count,
+    AVG(price) as avg_price,
+    COUNT(CASE WHEN rating >= 4 THEN 1 END) as high_quality
+  FROM videos
+  GROUP BY status
+
+view RevenueStats as
+  SELECT 
+    DATE_TRUNC('day', created_at) as date,
+    COUNT(*) as purchases,
+    SUM(amount) as revenue,
+    AVG(amount) as avg_order_value
+  FROM purchases
+  GROUP BY date
+  ORDER BY date DESC

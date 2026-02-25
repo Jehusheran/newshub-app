@@ -1,0 +1,53 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: newshub-db
+    restart: always
+    environment:
+      POSTGRES_DB: newshub
+      POSTGRES_USER: newshub
+      POSTGRES_PASSWORD: supersecret123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: newshub-redis
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: newshub-api
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://newshub:supersecret123@postgres:5432/newshub
+      - REDIS_URL=redis://redis:6379
+      - STRIPE_SECRET_KEY=sk_test_...
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /tmp/videos:/app/uploads  # Mac tmp folder
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: newshub-web
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./mobile/web:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
