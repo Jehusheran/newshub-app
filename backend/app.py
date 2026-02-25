@@ -19,13 +19,7 @@ def public_feed():
     return jsonify({
         "feed": "📰 NewsHub Public Feed LIVE!",
         "videos": [
-            {
-                "id": 1,
-                "title": "Breaking: Bengaluru Protest", 
-                "thumbnail": "https://via.placeholder.com/300x200?text=Protest",
-                "duration": "2:30",
-                "price": "₹2500"
-            }
+            {"id": 1, "title": "Bengaluru Protest", "price": "₹2500", "thumbnail": "https://via.placeholder.com/300x200?text=Protest"}
         ],
         "total": 12
     })
@@ -34,22 +28,8 @@ def public_feed():
 def buyer_videos():
     return jsonify({
         "videos": [
-            {
-                "id": 1,
-                "title": "Election Results Live", 
-                "price": 3500,
-                "duration": "45s",
-                "thumbnail": "https://via.placeholder.com/300x200?text=Election",
-                "seller": "NewsHub Pro"
-            },
-            {
-                "id": 2,
-                "title": "Traffic Accident MG Road", 
-                "price": 1800,
-                "duration": "1:15",
-                "thumbnail": "https://via.placeholder.com/300x200?text=Accident",
-                "seller": "Citizen Journalist"
-            }
+            {"id": 1, "title": "Election Live", "price": 3500, "duration": "45s"},
+            {"id": 2, "title": "MG Road Accident", "price": 1800, "duration": "1:15"}
         ],
         "total": 27
     })
@@ -57,38 +37,23 @@ def buyer_videos():
 @app.route('/api/admin/videos/pending')
 def admin_pending():
     return jsonify({
-        "pending_videos": [
-            {
-                "id": 101,
-                "title": "New Upload - Review Needed",
-                "uploader": "test@newshub.com",
-                "price": 2500,
-                "created_at": "2026-02-25T15:20:00Z",
-                "ai_status": "passed"
-            }
-        ],
+        "pending_videos": [{"id": 101, "title": "New Upload", "status": "PENDING"}],
         "total": 3
     })
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    title = request.form.get('title', 'Untitled Video')
+    title = request.form.get('title', 'Untitled')
     price = float(request.form.get('price', 0))
-    
     return jsonify({
         "success": True,
         "video_id": 999,
         "title": title,
         "price": price,
         "status": "PENDING",
-        "message": "✅ Video uploaded successfully! Awaiting admin approval (mock mode)",
-        "next_steps": [
-            "1. AI Moderation: Completed",
-            "2. Admin Review: Pending", 
-            "3. Publish: Available for buyers"
-        ]
+        "message": "✅ Upload complete! Awaiting admin review"
     }), 201
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
 
