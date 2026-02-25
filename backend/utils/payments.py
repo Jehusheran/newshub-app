@@ -7,7 +7,49 @@ NewsHub Payments - Stripe + 60/40 Royalty Splits
 - Indian Rupee (INR) pricing
 """
 
-import stripe
+# Try to import the official Stripe SDK; if it's not available, provide a minimal stub
+# so static analysis won't fail and runtime will raise clear errors when Stripe functionality is used.
+try:
+    import stripe  # type: ignore
+except Exception:
+    stripe = None  # type: ignore
+
+    class _StripeSignatureVerificationError(Exception):
+        """Raised when a webhook signature cannot be verified (stub)."""
+        pass
+
+    class _StripeError:
+        SignatureVerificationError = _StripeSignatureVerificationError
+
+    class _CheckoutSession:
+        @staticmethod
+        def create(*args, **kwargs):
+            raise RuntimeError(
+                "stripe package is not installed; install with 'pip install stripe' to use Stripe features"
+            )
+
+    class _Checkout:
+        Session = _CheckoutSession
+
+    class _Webhook:
+        @staticmethod
+        def construct_event(payload, signature, secret):
+            raise RuntimeError(
+                "stripe package is not installed; install with 'pip install stripe' to validate webhooks"
+            )
+
+    # Minimal stub exposing the attributes used in this module
+    stripe = type(
+        "StripeStub",
+        (),
+        {
+            "api_key": None,
+            "checkout": _Checkout,
+            "Webhook": _Webhook,
+            "error": _StripeError,
+        },
+    )
+
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -164,7 +206,7 @@ class NewsHubPayments:
         logger.info(f"💰 Royalty queued: ₹{amount} for {video_title}")
         return payout
     
-    def generate_receipt(self, purchase_ Dict) -> Dict:
+    def generate_receipt(self, purchase_data: Dict) -> Dict:
         """Tax-compliant receipt (GST India)"""
         royalties = self.calculate_royalty_split(purchase_data['amount'])
         

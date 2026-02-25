@@ -1,19 +1,25 @@
-#moderation.py        # AI nudity detection
+
 """
-NewsHub AI Content Moderation
-- Nudity detection (NudeNet)
-- Graphic violence scoring  
-- IT Rules 2021 compliance
+NewsHub AI Content Moderation (Fixed for NudeNet v3+)
+- Nudity detection (NudeNet Detector ONLY)
+- IT Rules 2021 compliance 
+- Video frame analysis
 """
 
 import os
-import requests
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Any
 import logging
-from nudenet import NudeClassifier, NudeDetector
+
+# Try to import NudeNet (modern version)
+try:
+    from nudenet import NudeDetector
+    NUDENET_AVAILABLE = True
+except ImportError:
+    NUDENET_AVAILABLE = False
+    print("⚠️  NudeNet not available. Using mock moderation.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,26 +29,22 @@ class NewsHubModerator:
     """AI-powered content moderation for news videos"""
     
     def __init__(self):
-        self.classifier = None
         self.detector = None
-        self.nudity_threshold = 0.8  # Reject if >80% unsafe
+        self.nudity_threshold = 0.6  # Reject if >60% unsafe
         self.init_models()
     
     def init_models(self):
-        """Initialize NudeNet models (downloads on first run)"""
-        try:
-            logger.info("🔄 Initializing NudeNet classifier...")
-            self.classifier = NudeClassifier()
-            logger.info("✅ NudeNet classifier ready")
-            
-            logger.info("🔄 Initializing NudeNet detector...")
-            self.detector = NudeDetector()
-            logger.info("✅ NudeNet detector ready")
-        except Exception as e:
-            logger.error(f"❌ Model init failed: {e}")
-            # Fallback to mock mode
-            self.classifier = MockClassifier()
-            self.detector = MockDetector()
+        """Initialize NudeNet detector (modern API)"""
+        if NUDENET_AVAILABLE:
+            try:
+                logger.info("🔄 Initializing NudeNet Detector...")
+                self.detector = NudeDetector()
+                logger.info("✅ NudeNet detector ready")
+            except Exception as e:
+                logger.error(f"❌ NudeNet init failed: {e}")
+                self.detector = None
+        else:
+            logger.info("ℹ️  Using mock moderation (install: pip install nudenet)")
     
     def extract_frames(self, video_path: str, max_frames: int = 10) -> List[str]:
         """Extract key frames from video for analysis"""
@@ -63,21 +65,35 @@ class NewsHubModerator:
         return frames
     
     def detect_nudity(self, image_path: str) -> Dict[str, float]:
-        """Classify image as safe/unsafe using NudeNet"""
-        if self.classifier:
-            result = self.classifier.classify(image_path)
-            return result.get(image_path, {'safe': 1.0, 'unsafe': 0.0})
-        return {'safe': 1.0, 'unsafe': 0.0}
+        """Detect nudity using modern NudeNet API"""
+        if self.detector:
+            try:
+                results = self.detector.detect(image_path)
+                # Calculate nudity score from detections
+                nudity_score = sum([d['score'] for d in results if d['score'] > 0.5])
+                return {
+                    'unsafe': min(1.0, nudity_score / max(1, len(results))),
+                    'safe': 1.0 - min(1.0, nudity_score / max(1, len(results)))
+                }
+            except:
+                return {'unsafe': 0.0, 'safe': 1.0}
+        return {'unsafe': 0.0, 'safe': 1.0}
     
     def detect_exposed_parts(self, image_path: str) -> List[Dict]:
-        """Detect specific NSFW parts (breasts, genitalia, etc.)"""
+        """Detect specific NSFW parts"""
         if self.detector:
-            return self.detector.detect(image_path)
+            try:
+                return self.detector.detect(image_path)
+            except:
+                return []
         return []
     
-    def analyze_video(self, video_path: str) -> Dict[str, any]:
+    def analyze_video(self, video_path: str) -> Dict[str, Any]:
         """Complete video moderation analysis"""
         logger.info(f"🔍 Analyzing video: {video_path}")
+        
+        if not os.path.exists(video_path):
+            return {"approved": False, "reason": "Video file not found"}
         
         # Extract frames
         frames = self.extract_frames(video_path)
@@ -86,84 +102,86 @@ class NewsHubModerator:
         
         # Analyze each frame
         nudity_scores = []
-        exposed_parts = []
+        all_exposed_parts = []
         
         for frame_path in frames:
-            # Nudity classification
             nudity = self.detect_nudity(frame_path)
             nudity_scores.append(nudity['unsafe'])
             
-            # Detailed detection
             parts = self.detect_exposed_parts(frame_path)
-            exposed_parts.extend(parts)
+            all_exposed_parts.extend(parts)
             
             # Cleanup
-            os.unlink(frame_path)
+            try:
+                os.unlink(frame_path)
+            except:
+                pass
         
         # Aggregate results
-        max_nudity = max(nudity_scores)
-        avg_nudity = sum(nudity_scores) / len(nudity_scores)
+        max_nudity = max(nudity_scores) if nudity_scores else 0
+        avg_nudity = sum(nudity_scores) / len(nudity_scores) if nudity_scores else 0
         
         # Decision logic (IT Rules 2021 compliance)
         is_nude = max_nudity > self.nudity_threshold
-        has_exposed_parts = any(
-            part['score'] > 0.7 for part in exposed_parts
-            if any(term in part['label'].upper() for term in 
-                   ['EXPOSED_', 'GENITALIA', 'BREAST'])
+        has_explicit_parts = any(
+            part.get('score', 0) > 0.7 
+            for part in all_exposed_parts
         )
         
         result = {
-            "approved": not (is_nude or has_exposed_parts),
+            "approved": not (is_nude or has_explicit_parts),
             "max_nudity_score": max_nudity,
             "avg_nudity_score": avg_nudity,
             "total_frames": len(frames),
-            "exposed_parts": exposed_parts[-5:],  # Last 5 detections
+            "exposed_parts_count": len(all_exposed_parts),
             "nudity_detected": is_nude,
-            "exposed_parts_detected": has_exposed_parts,
-            "reason": self.get_rejection_reason(is_nude, has_exposed_parts)
+            "explicit_parts_detected": has_explicit_parts,
+            "nudenet_available": NUDENET_AVAILABLE,
+            "reason": self.get_rejection_reason(is_nude, has_explicit_parts)
         }
         
-        logger.info(f"✅ Moderation complete: {result['approved']}")
+        logger.info(f"✅ Moderation complete: {result['approved']} (max_nudity: {max_nudity:.2f})")
         return result
     
-    def get_rejection_reason(self, is_nude: bool, has_exposed_parts: bool) -> str:
+    def get_rejection_reason(self, is_nude: bool, has_explicit_parts: bool) -> str:
         """Human-readable rejection reason"""
-        if is_nude and has_exposed_parts:
-            return "Graphic nudity detected (breasts/genitalia exposed)"
+        if is_nude and has_explicit_parts:
+            return "Graphic nudity + explicit parts detected"
         elif is_nude:
             return "High nudity probability detected"
-        elif has_exposed_parts:
+        elif has_explicit_parts:
             return "Explicit body parts detected"
-        return "Content safe"
-    
-    def mock_moderate(self, video_path: str) -> Dict[str, any]:
-        """Mock moderation for testing (no ML models)"""
-        return {
-            "approved": True,
-            "max_nudity_score": 0.05,
-            "avg_nudity_score": 0.02,
-            "nudity_detected": False,
-            "reason": "Mock approval (add NudeNet for production)"
-        }
-
-# Mock classes for testing without NudeNet
-class MockClassifier:
-    def classify(self, image_path: str) -> Dict[str, Dict[str, float]]:
-        return {image_path: {'safe': 0.95, 'unsafe': 0.05}}
-
-class MockDetector:
-    def detect(self, image_path: str) -> List[Dict]:
-        return []
+        return "Content approved - safe for NewsHub"
 
 # Global singleton
 moderator = NewsHubModerator()
 
-# API endpoints for Flask integration
-def moderate_upload(video_path: str) -> Dict[str, any]:
-    """Main entrypoint for upload moderation"""
+# Flask API integration
+def moderate_upload(video_path: str) -> Dict[str, Any]:
+    """Main entrypoint for Flask upload moderation"""
     return moderator.analyze_video(video_path)
 
+def mock_moderate(video_path: str) -> Dict[str, Any]:
+    """Mock moderation for testing"""
+    return {
+        "approved": True,
+        "max_nudity_score": 0.05,
+        "avg_nudity_score": 0.02,
+        "nudity_detected": False,
+        "reason": "Mock approval (NudeNet recommended for production)",
+        "nudenet_available": NUDENET_AVAILABLE
+    }
+
 if __name__ == "__main__":
-    # Test the moderator
-    result = moderator.mock_moderate("/tmp/test.mp4")
-    print(result)
+    import sys
+    if len(sys.argv) > 1:
+        video_path = sys.argv[1]
+        result = moderate_upload(video_path)
+    else:
+        result = mock_moderate("/tmp/test.mp4")
+    
+    print("NewsHub AI Moderation Result:")
+    print(f"Approved: {result['approved']}")
+    print(f"Reason: {result['reason']}")
+    print(f"NudeNet: {'✅ LIVE' if result['nudenet_available'] else '❌ Mock mode'}")
+

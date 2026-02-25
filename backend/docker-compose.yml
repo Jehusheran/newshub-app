@@ -1,12 +1,13 @@
+version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
+    ports:
+      - "5433:5432"
     environment:
       POSTGRES_DB: newshub
-      POSTGRES_USER: newshub  
+      POSTGRES_USER: newshub
       POSTGRES_PASSWORD: password123
-    ports:
-      - "5433:5432"      # ← NO CONFLICT
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U newshub"]
       interval: 5s
@@ -14,11 +15,12 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: .
     ports:
-      - "8080:5000"       # ← NO CONFLICT
+      - "8080:5000"  # ← CRITICAL: Maps localhost:8080 → Flask port 5000
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://newshub:password123@postgres:5432/newshub
+    restart: unless-stopped
